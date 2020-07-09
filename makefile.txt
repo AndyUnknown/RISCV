@@ -1,0 +1,5 @@
+all: RISCV
+RISCV:
+	gcc -o Hello RISCV.c
+clean:
+	rm -rf RISCV
