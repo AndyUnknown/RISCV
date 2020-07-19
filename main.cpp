@@ -1,14 +1,55 @@
-﻿
+﻿#define _CRT_SECURE_NO_WARNINGS
 #include <fstream>
 #include <iostream>
 #include <cmath>
+#include <map>
 using namespace std;
 int *rom;
 unsigned int pc = 0;
 unsigned int regs[32];
 bool flag = true;
 //ofstream out;
-int tick = 1;
+int tick = 0;
+
+struct m1 {};
+struct m2 {
+    int num;
+    m2(int n = 0) :num(n) {}
+};
+bool is_num(char c) {
+    if (c >= '0' && c <= '9') return true;
+    if (c >= 'A' && c <= 'F') return true;
+    if (c == '@') throw m1();
+    if (c == EOF) throw m2();
+    return false;
+}
+inline void read(unsigned int& num) {
+    char ch = getchar();unsigned int x = 0;
+    while (!is_num(ch)) { ch = getchar(); }
+    while (is_num(ch)) {
+        ch = (ch < 'A') ? (ch - '0') : (ch - 'A' + 10);
+        x = (x << 4) + ch;ch = getchar();
+    }
+    num = x;
+}
+inline unsigned int read() {//把32位码转换成int
+    char ch[2];
+    ch[1] = getchar();
+    while (!is_num(ch[1])) { ch[1] = getchar(); }
+    ch[0] = getchar();getchar();
+
+    // printf("read ->");for(int i=7;i>=0;--i) putchar(ch[i]);puts("");
+
+    unsigned int ans = 0;
+    for (int i = 0;i < 2;i++) {
+        if (ch[i] < 'A') ch[i] = ch[i] - '0';
+        else ch[i] = ch[i] - 'A' + 10;
+        ans |= ((unsigned int)(ch[i]) << (i << 2));
+        // printf("ans |= %d << %d\n",ch[i],4*i);
+    }
+    // printf("return %d\n",ans);
+    return ans;
+}
 
 enum INSTRUCTIONS {
     LUI,      
@@ -167,8 +208,6 @@ void print_thing(int i)
         break;
     }
 }
-
-
 int X_to_D(char* s, int X_len)
 {
     char* tmp;
@@ -186,13 +225,13 @@ int X_to_D(char* s, int X_len)
     delete[] tmp;
     return result;
 }
+/*
 bool read_in()
 {
-
     static char ch = cin.get();
     if (ch == EOF)
         return false;
-    while (ch != EOF)
+    while (ch != EOF && ch!='\x1a')
     {
         char add[8];
         if (ch == '@')
@@ -231,6 +270,24 @@ bool read_in()
         return false;
     return true;
 }
+*/
+
+void read_in()
+{
+    try {
+        while (true) {
+            rom[pc] = read();
+            pc += 1;
+        }
+    }
+    catch (m1 e) {
+        read(pc);
+        read_in();
+    }
+    catch (m2 e) {
+        pc = 0;
+    }
+}
 unsigned int get_inst()
 {
     char ch[8];
@@ -259,10 +316,11 @@ struct instruction
     unsigned int bin;
     INSTRUCTIONS op;
     char type;
-    unsigned int rs1=255, rs2=255, rd=255, imm = 0, adress = 0, rom_content = 0, calc_res = 0;
+    unsigned int rs1 = 255, rs2 = 255, rd = 255, imm = 0, adress = 0, rom_content = 0, calc_res = 0, start_pc = 0;
     bool has_ex = 0,has_id=0;
     instruction(unsigned int num)
     {
+        start_pc = pc - 4;
         bin = num;
         unsigned int func3 = (num >> 12) % 8;
         unsigned int opcode = num % (1 << 7);
@@ -451,7 +509,6 @@ struct instruction
         else if (op == SW || op == SH || op == SB)type = 'S';
         
     }
-    ~instruction(){}
     void decode()
     {
         if (type == 'U')
@@ -726,8 +783,9 @@ struct instruction
 
 struct streamline
 {
+    map<int, int> BTB;
     instruction* IF, * ID, * EX, * MEM, * WB, * sleep;
-    bool final_order = 0, has_sleep = 0;
+    bool final_order = 0, data_sleep = 0, jump_hazard = 0;
     unsigned int mem_tick = 0;
     int branch_buffer = 0;
     int correct_prediction=0, total_prediction=0;
@@ -737,13 +795,7 @@ struct streamline
         unsigned int pc_alternative;
     };
     saver branch;
-    bool branch_prediction()
-    {
-        if (branch_buffer == 0)return 0;
-        else if (branch_buffer == 1)return 0;
-        else if (branch_buffer == 2)return 1;
-        else if (branch_buffer == 3)return 1;
-    }
+    
     bool need_mem(instruction* EX)
     {
         if (EX && (EX->type == 'S' || EX->op == LW || EX->op == LB || EX->op == LH || EX->op == LBU || EX->op == LHU))
@@ -751,17 +803,59 @@ struct streamline
         else
             return 0;
     }
-    void get_branch()
+    
+    bool branch_prediction()
     {
-        branch.predict_res = branch_prediction();
-        if (branch.predict_res)
-            branch.pc_alternative = pc;
-        else
-            branch.pc_alternative = pc + ID->imm - 4;
-        if (branch.predict_res)
-            pc += ID->imm - 4;
-        
+        int branch_buffer;
+        if (BTB.find(ID->start_pc) == BTB.end())
+        {
+            BTB[ID->start_pc] = 0;
+            branch_buffer = 0;
+        }
+        else branch_buffer = BTB[ID->start_pc];
+
+        if (branch_buffer == 0)return 0;
+        else if (branch_buffer == 1)return 0;
+        else if (branch_buffer == 2)return 1;
+        else if (branch_buffer == 3)return 1;
     }
+    
+    void test_branch()
+    {
+        if (EX && EX->type == 'B' && EX->calc_res != branch.predict_res)
+        {
+            total_prediction += 1;
+            if (BTB[EX->start_pc] == 0)BTB[EX->start_pc] = 1;
+            else if (BTB[EX->start_pc] == 1)BTB[EX->start_pc] = 2;
+            else if (BTB[EX->start_pc] == 2)BTB[EX->start_pc] = 1;
+            else if (BTB[EX->start_pc] == 3)BTB[EX->start_pc] = 2;
+            delete IF;
+            delete ID;
+            IF = NULL;
+            ID = NULL;
+            pc = branch.pc_alternative;
+        }
+        else if (EX && EX->type == 'B' && EX->calc_res == branch.predict_res)
+        {
+            total_prediction += 1;
+            correct_prediction += 1;
+            if (BTB[EX->start_pc] == 0)BTB[EX->start_pc] = 0;
+            else if (BTB[EX->start_pc] == 1)BTB[EX->start_pc] = 0;
+            else if (BTB[EX->start_pc] == 2)BTB[EX->start_pc] = 3;
+            else if (BTB[EX->start_pc] == 3)BTB[EX->start_pc] = 3;
+        }
+
+    }
+    
+    /*
+    bool branch_prediction()
+    {
+        if (branch_buffer == 0)return 0;
+        else if (branch_buffer == 1)return 0;
+        else if (branch_buffer == 2)return 1;
+        else if (branch_buffer == 3)return 1;
+    }
+
     void test_branch()
     {
         if (EX && EX->type == 'B' && EX->calc_res != branch.predict_res)
@@ -788,11 +882,25 @@ struct streamline
         }
 
     }
+    */
+
+    void get_branch()
+    {
+        branch.predict_res = branch_prediction();
+        if (branch.predict_res)
+            branch.pc_alternative = pc;
+        else
+            branch.pc_alternative = pc + ID->imm - 4;
+        if (branch.predict_res)
+            pc += ID->imm - 4;
+        
+    }
     void instruction_fetch()
     {
         if (!final_order&&!IF)
         {
             int num = get_inst();
+            /*
             if (num == 0x0ff00513)
             {
                 final_order = 1;
@@ -800,19 +908,26 @@ struct streamline
             }
             else
                 IF = new instruction(num);
+            */
+            IF = new instruction(num);
         }
     }
     void instruction_decode()
     {
-        if (ID&&ID->has_id == 1)
+        if (ID&&ID->has_id == 1&&!jump_hazard)
             return;
         if (ID)
             ID->has_id = 1;
         if (ID)ID->decode();
-        if (ID && ID->op == JALR)
+        if (ID && ID->op == JALR &&(( !EX || EX->rd != ID->rs1) && (!MEM || MEM->rd != ID->rs1)))
         {
+            jump_hazard = 0;
             ID->calc_res = pc;
             pc = (int)((ID->imm + regs[ID->rs1]) >> 1) << 1;
+        }
+        if (ID && ID->op == JALR && !((!EX || EX->rd != ID->rs1) && (!MEM || MEM->rd != ID->rs1)))
+        {
+            jump_hazard = 1;
         }
         else if (ID && ID->op == JAL)
         {
@@ -836,7 +951,7 @@ struct streamline
     }
     void hazard_deal()
     {
-        has_sleep = 1;
+        data_sleep = 1;
         sleep = EX;
         EX = NULL;
     }
@@ -848,30 +963,45 @@ struct streamline
     void carry_out()//WB->hazard_deal->MEM->suspend/end_suspend->EX->ID->IF
     {
         //WB&MEM
-        if (WB)WB->write_back();
-        if ((EX&&MEM)&&((EX->rs1 == MEM->rd && MEM->rd !=255) || (EX->rs2 == MEM->rd && MEM->rd != 255) || (EX->rd == MEM->rd && MEM->rd != 255)))//hazard
+     
+        if (WB)
         {
-            hazard_deal();
+            if (WB->bin == 0x0ff00513)
+            {
+                final_order = 1;
+                IF = NULL;
+                ID = NULL;
+                EX = NULL;
+                MEM = NULL;
+                WB = NULL;
+                return;
+            }
+            WB->write_back();
+            //cout << tick << '\t' << hex <<  WB->bin << dec <<endl;
+            tick += 1;
         }
+        if ((EX&&MEM)&&((EX->rs1 == MEM->rd && MEM->rd !=255) || (EX->rs2 == MEM->rd && MEM->rd != 255) || (EX->rd == MEM->rd && MEM->rd != 255)))hazard_deal();//hazard
+
         if (MEM)
         {
             if(mem_tick == 0)
                 MEM->memory();
             mem_tick += 1;
-            if (mem_tick <= 0)
-                return;
-            else
+            if (mem_tick > 2)
                 mem_tick = 0;
         }
-        if (has_sleep)
+        if (data_sleep)
             return;
-
+        
 
         //EX
         execute();
 
+        
         //ID
         instruction_decode();
+        if (jump_hazard)
+            return;
 
         //IF
         instruction_fetch();
@@ -881,81 +1011,46 @@ struct streamline
     {
         //have_sleep=1表示应该等待mem操作完成再继续流水
 
-        
         if (WB)
         {
             delete WB;
             WB = NULL;
         }
-        if(has_sleep)
+        if(data_sleep)
         {
             int i = 0;
         }
+                                         
+        if (jump_hazard && mem_tick == 0)
+        {
+            WB = MEM;
+            MEM = NULL;
+            if (!data_sleep)
+            {
+                MEM = EX;
+                EX = NULL;
+            }
+            data_sleep = 0;
+        }
         /*
-        if (mem_tick == 0 && !has_sleep && EX&& !need_mem(EX)&&!MEM)
-        {
-            WB = EX;
-            EX = ID;
-            ID = IF;
-            IF = NULL;
-        }
-        else if (mem_tick == 0 && !has_sleep && EX && !need_mem(EX) && MEM)
-        {
-            WB = MEM;
-        }
-        else if (mem_tick == 0 && !has_sleep && EX && need_mem(EX))
-        {
-            WB = MEM;
-            MEM = EX;
-            EX = ID;
-            ID = IF;
-            IF = NULL;
-        }
-        else if (has_sleep && mem_tick == 0)
+        if (!jump_hazard && mem_tick == 0)
         {
             WB = MEM;
             MEM = NULL;
-            has_sleep = 0;
-        }
-        else if (mem_tick == 0 && MEM)
-        {
-            WB = MEM;
-            MEM = NULL;
-        }
-        else if(mem_tick!=0&&!has_sleep&&(EX&&!need_mem(EX)))
-        {
-            WB = EX;
-            EX = ID;
-            ID = IF;
-            IF = NULL;
-        }
-        else if(!(mem_tick!=0&&!has_sleep&&EX&&need_mem(EX)))
-        {
-            EX = ID;
-            ID = IF;
-            IF = NULL;
-        }
-        */                                             
-        /*
-        if (mem_tick == 0)
-        {
-            WB = MEM;
-            MEM = NULL;
-            if (!has_sleep)
+            if (!data_sleep)
             {
                 MEM = EX;
                 EX = ID;
                 ID = IF;
                 IF = NULL;
             }
-            has_sleep = 0;
+            data_sleep = 0;
         }
         */
-
         
-        if (MEM)//有MEM
+        
+        else if (MEM)//有MEM
         {
-            
             if (EX && need_mem(EX))//EX要用mem
             {
                 if (mem_tick == 0)//MEM做完了
@@ -966,17 +1061,17 @@ struct streamline
                     ID = IF;
                     IF = NULL;
                 
-                    has_sleep = 0;
+                    data_sleep = 0;
                 }
                 //MEM没做完继续做
             }
-            else if (has_sleep)//EX在睡眠
+            else if (data_sleep)//EX在睡眠
             {
                 if (mem_tick == 0)//MEM做完了
                 {
                     WB = MEM;
                     MEM = NULL;
-                    has_sleep = 0;//起床
+                    data_sleep = 0;//起床
                 }
                 //MEM没做完继续做
             }
@@ -996,7 +1091,7 @@ struct streamline
                 }
             }  
         }
-        else//没有MEM操作，显然没人睡觉
+        else if(!MEM)//没有MEM操作，显然没人睡觉
         {
             if (EX && need_mem(EX))//EX要用mem
             {
@@ -1005,7 +1100,7 @@ struct streamline
                 ID = IF;
                 IF = NULL;
             }
-            else if (!need_mem(EX))//EX不要用mem或者没用EX
+            else if (!need_mem(EX))//EX不要用mem
             {
                 WB = EX;
                 EX = ID;
@@ -1013,9 +1108,9 @@ struct streamline
                 IF = NULL;
             }
         }
-
-
-        if (!has_sleep && sleep)
+        
+        
+        if (!data_sleep && sleep)
         {
             end_suspension();
         }
@@ -1038,6 +1133,7 @@ struct streamline
 
 int main()
 {
+    freopen(".\\pi 137.data", "r", stdin);
     char operation[32];
     rom = new int[1 << 20];
     for (int i = 0;i < (1 << 20);++i)
@@ -1045,6 +1141,7 @@ int main()
 
     //    out.open("res.txt");
     read_in();
+
 
     
     streamline st;
@@ -1054,10 +1151,9 @@ int main()
     {
         st.carry_out();
         st.next_round();
-        tick += 1;
     }
     cout << (((unsigned int)regs[10]) & 255u) << endl;
-    //cout << st.correct_prediction << '/' << st.total_prediction;
+//    cout << st.correct_prediction << '/' << st.total_prediction;
     delete[] rom;
    
 
