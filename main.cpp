@@ -803,7 +803,7 @@ struct streamline
         else
             return 0;
     }
-    
+    /*
     bool branch_prediction()
     {
         int branch_buffer;
@@ -847,7 +847,7 @@ struct streamline
 
     }
     
-    /*
+    */
     bool branch_prediction()
     {
         if (branch_buffer == 0)return 0;
@@ -855,7 +855,7 @@ struct streamline
         else if (branch_buffer == 2)return 1;
         else if (branch_buffer == 3)return 1;
     }
-
+    
     void test_branch()
     {
         if (EX && EX->type == 'B' && EX->calc_res != branch.predict_res)
@@ -882,7 +882,7 @@ struct streamline
         }
 
     }
-    */
+    
 
     void get_branch()
     {
@@ -1133,7 +1133,7 @@ struct streamline
 
 int main()
 {
-    //freopen(".\\pi 137.data", "r", stdin);
+      freopen(".\\pi 137.data", "r", stdin);
     char operation[32];
     rom = new int[1 << 20];
     for (int i = 0;i < (1 << 20);++i)
