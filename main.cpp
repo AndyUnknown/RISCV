@@ -900,7 +900,7 @@ struct streamline
         if (!final_order&&!IF)
         {
             int num = get_inst();
-            /*
+            
             if (num == 0x0ff00513)
             {
                 final_order = 1;
@@ -908,8 +908,9 @@ struct streamline
             }
             else
                 IF = new instruction(num);
-            */
-            IF = new instruction(num);
+            
+            /*
+            IF = new instruction(num);*/
         }
     }
     void instruction_decode()
@@ -1032,7 +1033,7 @@ struct streamline
             }
             data_sleep = 0;
         }
-        /*
+        
         if (!jump_hazard && mem_tick == 0)
         {
             WB = MEM;
@@ -1046,9 +1047,9 @@ struct streamline
             }
             data_sleep = 0;
         }
-        */
         
         
+        /*
         else if (MEM)//有MEM
         {
             if (EX && need_mem(EX))//EX要用mem
@@ -1108,7 +1109,7 @@ struct streamline
                 IF = NULL;
             }
         }
-        
+        */
         
         if (!data_sleep && sleep)
         {
